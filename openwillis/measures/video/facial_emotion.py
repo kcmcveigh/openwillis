@@ -54,11 +54,11 @@ def run_deepface(path, measures):
                     break
 
                 df_common = pd.DataFrame([[frame]], columns=['frame'])
+                #https://github.com/serengil/deepface/blob/master/deepface/modules/demography.py
+                # I think need to update
                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
                 face_analysis = DeepFace.analyze(img_path = img_rgb, actions = ['emotion'])
-                df_face = pd.DataFrame([face_analysis['emotion'].values()], columns=cols)/100
-
+                df_face = pd.DataFrame([face_analysis[0]['emotion'].values()], columns=cols)/100
                 frame +=1
                 df_emotion = pd.concat([df_common, df_face], axis=1)
                 df_list.append(df_emotion)

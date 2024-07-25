@@ -180,7 +180,12 @@ def extract_face_bgr(frame, back_end_str, enforce_detection, align):
     )
     return faces_detected   
 
-def extract_faces(frame, frame_idx, back_end_str='mtcnn', align=True, enforce_detection=False):
+def extract_faces(
+    frame, frame_idx, 
+    back_end_str='mtcnn',
+    align=True, 
+    enforce_detection=False
+):
     """
     Extracts faces from a given frame using the specified backend and alignment settings.
 
@@ -394,8 +399,10 @@ def cluster_facedata(
 
     facedata_df = cluster_embeddings(
         facedata_df,
-        confidence_threshold=threshold
+        confidence_threshold=threshold,
+        n_clusters=n_clusters
     )
+
     return facedata_df
 
 def get_frame_indices_below_threshold(
@@ -508,8 +515,7 @@ def prep_face_clusters_for_output_(
     min_frames_face_present, 
     capture_n_frames_per_second,
     fps,
-    n_clusters,
-    bbox_cols = ['bb_x','bb_y','bb_w','bb_h']
+    n_clusters
 ):
     """
     Filters and prepares face clusters for output.
@@ -617,6 +623,40 @@ def draw_bounding_boxes_sf(frame, bb_dict):
     cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
     return frame
 
+def blacken_outside_bounding_box(frame, bb_dict):
+    """
+    Blackens the area outside a specified bounding box in the given frame.
+
+    Parameters
+    ----------
+    frame : numpy.ndarray
+        The input image frame in which the area outside the bounding box will be blackened.
+    bb_dict : dict
+        Dictionary containing bounding box coordinates and dimensions with keys:
+        'bb_x' (int): The x-coordinate of the top-left corner of the bounding box.
+        'bb_y' (int): The y-coordinate of the top-left corner of the bounding box.
+        'bb_w' (int): The width of the bounding box.
+        'bb_h' (int): The height of the bounding box.
+
+    Returns
+    -------
+    numpy.ndarray
+        The resulting image frame with the area outside the bounding box blackened.
+    """
+    x = bb_dict['bb_x']
+    y = bb_dict['bb_y']
+    w = bb_dict['bb_w']
+    h = bb_dict['bb_h']
+
+    # Create a black image of the same size as the frame
+    mask = np.zeros_like(frame)
+
+    # Copy the bounding box area from the original frame to the mask
+    mask[y:y+h, x:x+w] = frame[y:y+h, x:x+w]
+
+    return mask
+
+
 def process_video_single_face(
     video_path,
     output_path,
@@ -657,9 +697,11 @@ def process_video_single_face(
             
         frame_dict = detections[frame_index]
         if len(frame_dict.keys()) != 0:
-            draw_bounding_boxes_sf(frame,frame_dict)
-        
-        out.write(frame)
+            #draw_bounding_boxes_sf(frame,frame_dict)
+            face_frame = blacken_outside_bounding_box(frame,frame_dict)
+            out.write(face_frame)
+        else:
+            out.write(frame)
         frame_index += 1
 
     cap.release()

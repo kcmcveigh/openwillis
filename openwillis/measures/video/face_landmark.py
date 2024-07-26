@@ -165,18 +165,39 @@ def filter_coord(result):
 
     return df_coord
 
-def process_and_format_face_mesh(img,face_mesh,df_common):
+def process_and_format_face_mesh(img, face_mesh, df_common):
     """
-    ---------------------------------------------------------------------------------------------------
+    Process the given image using the face_mesh model and format the resulting face landmarks.
+
+    Args:
+        img (numpy.ndarray): The input image.
+        face_mesh: The face_mesh model.
+        df_common (pandas.DataFrame): The common dataframe.
+
+    Returns:
+        pandas.DataFrame: The formatted dataframe containing the face landmarks.
     """
     result = face_mesh.process(img)
     df_coord = filter_coord(result)
     df_landmark = pd.concat([df_common, df_coord], axis=1)
     return df_landmark
 
-def crop_and_process_face_mesh(img,face_mesh,df_common,bbox,frame):
+def crop_and_process_face_mesh(img, face_mesh, df_common, bbox, frame):
+    """
+    Crop and process the face mesh on the given image.
+
+    Args:
+        img (numpy.ndarray): The input image.
+        face_mesh: The face mesh object.
+        df_common: The common dataframe.
+        bbox: The bounding box coordinates of the face.
+        frame: The frame object.
+
+    Returns:
+        pandas.DataFrame: The processed face landmarks dataframe.
+    """
     if bbox:
-        cropped_img = crop_img(img,bbox)
+        cropped_img = crop_img(img, bbox)
         df_landmark = process_and_format_face_mesh(
             cropped_img,
             face_mesh,
@@ -217,6 +238,7 @@ def run_facemesh(path, bbox_list=[]):
         num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         len_bbox_list = len(bbox_list)
         print(num_frames, len_bbox_list)
+
         if (len_bbox_list>0) & (num_frames != len_bbox_list):
             raise ValueError('Number of frames in video and number of bounding boxes do not match')
         
@@ -239,7 +261,7 @@ def run_facemesh(path, bbox_list=[]):
                         df_common
                     )
                 else:
-
+                    
                     bbox = bbox_list[frame]
                     df_landmark = crop_and_process_face_mesh(
                         img_rgb,

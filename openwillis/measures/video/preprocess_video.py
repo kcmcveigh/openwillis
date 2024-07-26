@@ -379,6 +379,7 @@ def cluster_embeddings(facedata_df, confidence_threshold=0.7, n_clusters=2):
     facedata_df : pandas.DataFrame
         DataFrame with cluster assignments for each face.
     """
+    
     threshold_bools = facedata_df['confidence'] > confidence_threshold
     thresholded_facedata_df = facedata_df[threshold_bools]
     cluster_model = KMeans(n_clusters=n_clusters)
@@ -393,6 +394,17 @@ def cluster_facedata(
     threshold,
     n_clusters=2
 ):
+    """
+    Clusters the face data across frames using embeddings.
+
+    Args:
+        face_data_across_frames (list): A list of face data across frames.
+        threshold (float): The confidence threshold for clustering.
+        n_clusters (int, optional): The number of clusters to create. Defaults to 2.
+
+    Returns:
+        pandas.DataFrame: The clustered face data.
+    """
     facedata_df = facedata_list_to_df(
         face_data_across_frames
     )
@@ -532,7 +544,7 @@ def prep_face_clusters_for_output_(
     """
     
     facedata_df['sample_time']=facedata_df['frame_idx']/fps
-    frames_per_row = int(fps/capture_n_frames_per_second)
+    frames_per_row = round(fps/capture_n_frames_per_second)
     max_frame_idx=facedata_df.frame_idx.max() + frames_per_row
 
     face_list_dict = {}

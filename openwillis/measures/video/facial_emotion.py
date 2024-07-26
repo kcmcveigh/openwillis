@@ -17,22 +17,45 @@ from vutil import crop_img
 logging.basicConfig(level=logging.INFO)
 logger=logging.getLogger()
 
-def extract_emo_and_format(img_rgb, cols,df_common): 
+def extract_emo_and_format(img_rgb, cols, df_common):
+    """
+    Extracts facial emotions from an image and formats the results into a DataFrame.
+
+    Parameters:
+    img_rgb (str): The path to the image file in RGB format.
+    cols (list): A list of column names for the resulting DataFrame.
+    df_common (pd.DataFrame): A DataFrame containing common data.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the common data and the extracted facial emotions.
+    """
     face_analysis = DeepFace.analyze(
-        img_path = img_rgb, 
-        actions = ['emotion'],
-        detector_backend = 'skip'
+        img_path=img_rgb,
+        actions=['emotion'],
+        detector_backend='skip'
     )
-    df_face = pd.DataFrame([face_analysis[0]['emotion'].values()], columns=cols)/100
+    df_face = pd.DataFrame([face_analysis[0]['emotion'].values()], columns=cols) / 100
     df_emotion = pd.concat([df_common, df_face], axis=1)
     return df_emotion
 
-def crop_and_extract_emo(img_rgb, cols,df_common, bbox):
 
+def crop_and_extract_emo(img_rgb, cols, df_common, bbox):
+    """
+    Crop and extract emotions from an image.
 
+    Args:
+        img_rgb (numpy.ndarray): The RGB image to process.
+        cols (list): The list of column names for the emotion data.
+        df_common (pandas.DataFrame): The common dataframe for emotion data.
+        bbox (tuple): The bounding box coordinates for cropping the image.
+
+    Returns:
+        pandas.DataFrame: The extracted emotion data.
+
+    """
     if bbox:
         img_rgb = crop_img(img_rgb, bbox)
-        df_emotion = extract_emo_and_format(img_rgb, cols,df_common)
+        df_emotion = extract_emo_and_format(img_rgb, cols, df_common)
     else:
         df_emotion = get_undected_emotion(frame, cols)
     return df_emotion
@@ -79,9 +102,8 @@ def run_deepface(path, measures,bbox_list=[]):
                 ret_type, img = cap.read()
                 if ret_type is not True:
                     break
+
                 df_common = pd.DataFrame([[frame]], columns=['frame'])
-                #https://github.com/serengil/deepface/blob/master/deepface/modules/demography.py
-                # I think need to update
                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
                 if len_bbox_list>0:
@@ -167,7 +189,7 @@ def get_emotion(path, error_info, measures, bbox_list=[]):
 
     return df_emo
 
-def baseline(df, base_path, measures):
+def baseline(df, base_path, measures, base_bbox_list=[]):
     """
     ------------------------------------------------------------------------------------------------------
     This function normalizes the facial emotion data in the input dataframe using the baseline video. If no
@@ -199,7 +221,7 @@ def baseline(df, base_path, measures):
     df_common = df_emo[['frame']]
     df_emo.drop(columns=['frame'], inplace=True)
 
-    base_emo = get_emotion(base_path, 'baseline', measures)
+    base_emo = get_emotion(base_path, 'baseline', measures, bbox_list=base_bbox_list)
     base_mean = base_emo.iloc[:,1:].mean() + 1 #Normalization
 
     base_df = pd.DataFrame(base_mean).T
@@ -284,7 +306,7 @@ def emotional_expressivity(filepath, baseline_filepath='',bbox_list=[],base_bbox
         file = open(measure_path)
         measures = json.load(file)
 
-        df_emotion = get_emotion(filepath, 'input', measures, bbox_list)
+        df_emotion = get_emotion(filepath, 'input', measures, bbox_list=bbox_list)
         df_norm_emo = baseline(df_emotion, baseline_filepath, measures)
 
         cols = [measures['angry'], measures['disgust'], measures['fear'], measures['happy'], measures['sad'],

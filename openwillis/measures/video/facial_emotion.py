@@ -12,11 +12,32 @@ import os
 import json
 import logging
 
+from vutil import crop_img
+
 logging.basicConfig(level=logging.INFO)
 logger=logging.getLogger()
 
+def extract_emo_and_format(img_rgb, cols,df_common): 
+    face_analysis = DeepFace.analyze(
+        img_path = img_rgb, 
+        actions = ['emotion'],
+        detector_backend = 'skip'
+    )
+    df_face = pd.DataFrame([face_analysis[0]['emotion'].values()], columns=cols)/100
+    df_emotion = pd.concat([df_common, df_face], axis=1)
+    return df_emotion
 
-def run_deepface(path, measures):
+def crop_and_extract_emo(img_rgb, cols,df_common, bbox):
+
+
+    if bbox:
+        img_rgb = crop_img(img_rgb, bbox)
+        df_emotion = extract_emo_and_format(img_rgb, cols,df_common)
+    else:
+        df_emotion = get_undected_emotion(frame, cols)
+    return df_emotion
+
+def run_deepface(path, measures,bbox_list=[]):
     """
     ------------------------------------------------------------------------------------------------------
     This function takes an image path and measures config object as input, and uses the DeepFace package to
@@ -42,31 +63,39 @@ def run_deepface(path, measures):
     frame = 0
     cols = [measures['angry'], measures['disgust'], measures['fear'], measures['happy'], measures['sad'],
             measures['surprise'], measures['neutral']]
+    len(bbox_list)
 
     try:
         cap = cv2.VideoCapture(path)
-
+        num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        len_bbox_list = len(bbox_list)
+        print(num_frames, len_bbox_list)
+        if (len_bbox_list>0) & (num_frames != len_bbox_list):
+            raise ValueError('Number of frames in video and number of bounding boxes do not match')
+        
         while True:
-            try:
 
+            try:
                 ret_type, img = cap.read()
                 if ret_type is not True:
                     break
-
                 df_common = pd.DataFrame([[frame]], columns=['frame'])
                 #https://github.com/serengil/deepface/blob/master/deepface/modules/demography.py
                 # I think need to update
                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                face_analysis = DeepFace.analyze(img_path = img_rgb, actions = ['emotion'])
-                df_face = pd.DataFrame([face_analysis[0]['emotion'].values()], columns=cols)/100
-                frame +=1
-                df_emotion = pd.concat([df_common, df_face], axis=1)
-                df_list.append(df_emotion)
+
+                if len_bbox_list>0:
+                    bbox = bbox_list[frame]
+                    df_emotion =crop_and_extract_emo(img_rgb, cols,df_common, bbox)
+                else:
+                    df_emotion = extract_emo_and_format(img_rgb, cols,df_common)
 
             except Exception as e:
                 df_emotion = get_undected_emotion(frame, cols)
-                df_list.append(df_emotion)
-                frame +=1
+            
+            df_list.append(df_emotion)
+            
+            frame +=1
 
     except Exception as e:
         logger.error(f'Face not detected by deepface for- file:{path} & Error: {e}')
@@ -108,7 +137,7 @@ def get_undected_emotion(frame, cols):
     df_emotion = pd.concat([df_common, df], axis=1)
     return df_emotion
 
-def get_emotion(path, error_info, measures):
+def get_emotion(path, error_info, measures, bbox_list=[]):
     """
     ------------------------------------------------------------------------------------------------------
     This function fetches facial emotion data for each frame of the input video. It calls the run_deepface()
@@ -131,7 +160,7 @@ def get_emotion(path, error_info, measures):
     ------------------------------------------------------------------------------------------------------
     """
 
-    emotion_list = run_deepface(path, measures)
+    emotion_list = run_deepface(path, measures, bbox_list=bbox_list)
 
     if len(emotion_list)>0:
         df_emo = pd.concat(emotion_list).reset_index(drop=True)
@@ -211,7 +240,7 @@ def get_summary(df):
         df_summ = pd.concat([df_mean, df_std], axis =1).reset_index(drop=True)
     return df_summ
 
-def emotional_expressivity(filepath, baseline_filepath=''):
+def emotional_expressivity(filepath, baseline_filepath='',bbox_list=[],base_bbox_list=[]):
     """
     ------------------------------------------------------------------------------------------------------
 
@@ -255,7 +284,7 @@ def emotional_expressivity(filepath, baseline_filepath=''):
         file = open(measure_path)
         measures = json.load(file)
 
-        df_emotion = get_emotion(filepath, 'input', measures)
+        df_emotion = get_emotion(filepath, 'input', measures, bbox_list)
         df_norm_emo = baseline(df_emotion, baseline_filepath, measures)
 
         cols = [measures['angry'], measures['disgust'], measures['fear'], measures['happy'], measures['sad'],

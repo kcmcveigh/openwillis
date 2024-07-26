@@ -14,6 +14,8 @@ from PIL import Image
 from protobuf_to_dict import protobuf_to_dict
 import logging
 
+from vutil import crop_img
+
 logging.basicConfig(level=logging.INFO)
 logger=logging.getLogger()
 
@@ -163,7 +165,30 @@ def filter_coord(result):
 
     return df_coord
 
-def run_facemesh(path):
+def process_and_format_face_mesh(img,face_mesh,df_common):
+    """
+    ---------------------------------------------------------------------------------------------------
+    """
+    result = face_mesh.process(img)
+    df_coord = filter_coord(result)
+    df_landmark = pd.concat([df_common, df_coord], axis=1)
+    return df_landmark
+
+def crop_and_process_face_mesh(img,face_mesh,df_common,bbox,frame):
+    if bbox:
+        cropped_img = crop_img(img,bbox)
+        df_landmark = process_and_format_face_mesh(
+            cropped_img,
+            face_mesh,
+            df_common
+        )
+    else:
+        df_landmark = get_undected_markers(frame)
+    return df_landmark
+
+
+
+def run_facemesh(path, bbox_list=[]):
     """
     ---------------------------------------------------------------------------------------------------
 
@@ -189,6 +214,12 @@ def run_facemesh(path):
     try:
 
         cap = cv2.VideoCapture(path)
+        num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        len_bbox_list = len(bbox_list)
+        print(num_frames, len_bbox_list)
+        if (len_bbox_list>0) & (num_frames != len_bbox_list):
+            raise ValueError('Number of frames in video and number of bounding boxes do not match')
+        
         face_mesh = init_facemesh()
 
         while True:
@@ -197,21 +228,33 @@ def run_facemesh(path):
                 ret_type, img = cap.read()
                 if ret_type is not True:
                     break
-
                 df_common = pd.DataFrame([[frame]], columns=['frame'])
                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-                result = face_mesh.process(img_rgb)
-                df_coord = filter_coord(result)
+                if len_bbox_list==0:
 
-                frame +=1
-                df_landmark = pd.concat([df_common, df_coord], axis=1)
-                df_list.append(df_landmark)
+                    df_landmark = process_and_format_face_mesh(
+                        img_rgb,
+                        face_mesh,
+                        df_common
+                    )
+                else:
+
+                    bbox = bbox_list[frame]
+                    df_landmark = crop_and_process_face_mesh(
+                        img_rgb,
+                        face_mesh,
+                        df_common,
+                        bbox,
+                        frame
+                    )
 
             except Exception as e:
+                print(e,frame)
                 df_landmark = get_undected_markers(frame)
-                df_list.append(df_landmark)
-                frame +=1
+
+            df_list.append(df_landmark)
+            frame +=1
 
     except Exception as e:
         logger.error(f'Face not detected by mediapipe file: {path} & Error: {e}')
@@ -251,7 +294,7 @@ def get_undected_markers(frame):
     df_landmark = pd.concat([df_common, df_coord], axis=1)
     return df_landmark
 
-def get_landmarks(path, error_info):
+def get_landmarks(path, error_info,bbox_list=[]):
     """
     ---------------------------------------------------------------------------------------------------
 
@@ -273,7 +316,7 @@ def get_landmarks(path, error_info):
     ---------------------------------------------------------------------------------------------------
     """
 
-    landmark_list = run_facemesh(path)
+    landmark_list = run_facemesh(path,bbox_list=bbox_list)
 
     if len(landmark_list)>0:
         df_landmark = pd.concat(landmark_list).reset_index(drop=True)
@@ -429,7 +472,7 @@ def get_mouth_openness(df, measures):
 
     return mouth_openness
 
-def baseline(base_path):
+def baseline(base_path, bbox_list=[]):
     """
     ---------------------------------------------------------------------------------------------------
 
@@ -449,7 +492,7 @@ def baseline(base_path):
     ---------------------------------------------------------------------------------------------------
     """
 
-    base_landmark = get_landmarks(base_path, 'baseline')
+    base_landmark = get_landmarks(base_path, 'baseline',bbox_list=bbox_list)
     disp_base_df = get_distance(base_landmark)
 
     disp_base_df['overall'] = pd.DataFrame(disp_base_df.mean(axis=1))
@@ -483,7 +526,7 @@ def get_empty_dataframe():
     empty_df = pd.DataFrame(columns=columns)
     return empty_df
 
-def get_displacement(lmk_df, base_path, measures):
+def get_displacement(lmk_df, base_path, measures,base_bbox_list=[]):
     """
     ---------------------------------------------------------------------------------------------------
 
@@ -518,7 +561,7 @@ def get_displacement(lmk_df, base_path, measures):
             disp_actual_df['overall'] = pd.DataFrame(disp_actual_df.mean(axis=1))
 
             if os.path.exists(base_path):
-                disp_base_df = baseline(base_path)
+                disp_base_df = baseline(base_path,bbox_list=base_bbox_list)
                 check_na = disp_base_df.iloc[:,1:].isna().all().all()
 
                 if len(disp_base_df)> 0 and not check_na:
@@ -601,7 +644,7 @@ def get_summary(df):
         df_summ = pd.concat([df_mean, df_std], axis =1).reset_index(drop=True)
     return df_summ
 
-def facial_expressivity(filepath, baseline_filepath=''):
+def facial_expressivity(filepath, baseline_filepath='',bbox_list=[],base_bbox_list=[]):
     """
     ---------------------------------------------------------------------------------------------------
 
@@ -644,8 +687,8 @@ def facial_expressivity(filepath, baseline_filepath=''):
     config = get_config(os.path.abspath(__file__), "facial.json")
 
     try:
-        df_landmark = get_landmarks(filepath, 'input')
-        df_disp = get_displacement(df_landmark, baseline_filepath, config)
+        df_landmark = get_landmarks(filepath, 'input',bbox_list=bbox_list)
+        df_disp = get_displacement(df_landmark, baseline_filepath, config,base_bbox_list=base_bbox_list)
 
         # use mouth height to calculate mouth openness
         df_disp['mouth_openness'] = get_mouth_openness(df_landmark, config)

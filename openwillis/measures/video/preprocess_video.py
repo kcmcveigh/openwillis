@@ -612,7 +612,7 @@ def preprocess_face_video(
         n_clusters
     )
 
-    return out_dict
+    return out_dict,facedata_df
 
 def draw_bounding_boxes_sf(frame, bb_dict):
     # TODO need to updated

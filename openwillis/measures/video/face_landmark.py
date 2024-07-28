@@ -8,43 +8,18 @@ import cv2
 import json
 import os
 import math
+import logging
 
+import tensorflow as tf
 import mediapipe as mp
 from PIL import Image
 from protobuf_to_dict import protobuf_to_dict
-import logging
 
-from vutil import crop_img
+
+from vutil import crop_img, get_config
 
 logging.basicConfig(level=logging.INFO)
 logger=logging.getLogger()
-
-def get_config(filepath, json_file):
-    """
-    ------------------------------------------------------------------------------------------------------
-
-    This function reads the configuration file containing the column names for the output dataframes,
-    and returns the contents of the file as a dictionary.
-
-    Parameters:
-    ...........
-    filepath : str
-        The path to the configuration file.
-    json_file : str
-        The name of the configuration file.
-
-    Returns:
-    ...........
-    measures: A dictionary containing the names of the columns in the output dataframes.
-
-    ------------------------------------------------------------------------------------------------------
-    """
-    dir_name = os.path.dirname(filepath)
-    measure_path = os.path.abspath(os.path.join(dir_name, f"config/{json_file}"))
-
-    file = open(measure_path)
-    measures = json.load(file)
-    return measures
 
 def init_facemesh():
     """
@@ -158,7 +133,6 @@ def filter_coord(result):
 
     if len(keypoints)>0:
         df_x = filter_landmarks('x', keypoints)
-
         df_y = filter_landmarks('y', keypoints)
         df_z = filter_landmarks('z', keypoints)
         df_coord = pd.concat([df_x, df_y, df_z], axis=1)
@@ -188,10 +162,10 @@ def crop_and_process_face_mesh(img, face_mesh, df_common, bbox, frame):
 
     Args:
         img (numpy.ndarray): The input image.
-        face_mesh: The face mesh object.
-        df_common: The common dataframe.
-        bbox: The bounding box coordinates of the face.
-        frame: The frame object.
+        face_mesh (object): The face mesh object.
+        df_common (pd.Dataframe): The common dataframe.
+        bbox (dict): The bounding box coordinates of the face.
+        frame (int): The frame index
 
     Returns:
         pandas.DataFrame: The processed face landmarks dataframe.
@@ -206,7 +180,6 @@ def crop_and_process_face_mesh(img, face_mesh, df_common, bbox, frame):
     else:
         df_landmark = get_undected_markers(frame)
     return df_landmark
-
 
 
 def run_facemesh(path, bbox_list=[]):

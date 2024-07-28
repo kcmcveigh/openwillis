@@ -12,7 +12,7 @@ import os
 import json
 import logging
 
-from vutil import crop_img
+from vutil import crop_img, get_config
 
 logging.basicConfig(level=logging.INFO)
 logger=logging.getLogger()
@@ -39,7 +39,13 @@ def extract_emo_and_format(img_rgb, cols, df_common):
     return df_emotion
 
 
-def crop_and_extract_emo(img_rgb, cols, df_common, bbox):
+def crop_and_extract_emo(
+    img_rgb,
+    cols,
+    df_common,
+    bbox,
+    frame
+):
     """
     Crop and extract emotions from an image.
 
@@ -86,13 +92,13 @@ def run_deepface(path, measures,bbox_list=[]):
     frame = 0
     cols = [measures['angry'], measures['disgust'], measures['fear'], measures['happy'], measures['sad'],
             measures['surprise'], measures['neutral']]
-    len(bbox_list)
 
     try:
+
         cap = cv2.VideoCapture(path)
         num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         len_bbox_list = len(bbox_list)
-        print(num_frames, len_bbox_list)
+
         if (len_bbox_list>0) & (num_frames != len_bbox_list):
             raise ValueError('Number of frames in video and number of bounding boxes do not match')
         
@@ -108,7 +114,7 @@ def run_deepface(path, measures,bbox_list=[]):
 
                 if len_bbox_list>0:
                     bbox = bbox_list[frame]
-                    df_emotion =crop_and_extract_emo(img_rgb, cols,df_common, bbox)
+                    df_emotion =crop_and_extract_emo(img_rgb, cols,df_common, bbox,frame)
                 else:
                     df_emotion = extract_emo_and_format(img_rgb, cols,df_common)
 
@@ -300,12 +306,7 @@ def emotional_expressivity(filepath, baseline_filepath='',bbox_list=[],base_bbox
     try:
 
         #Loading json config
-        dir_name = os.path.dirname(os.path.abspath(__file__))
-        measure_path = os.path.abspath(os.path.join(dir_name, 'config/facial.json'))
-
-        file = open(measure_path)
-        measures = json.load(file)
-
+        measures = get_config(os.path.abspath(__file__), 'facial.json')
         df_emotion = get_emotion(filepath, 'input', measures, bbox_list=bbox_list)
         df_norm_emo = baseline(df_emotion, baseline_filepath, measures)
 

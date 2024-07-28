@@ -1,12 +1,20 @@
+# 
 import numpy as np
 import pandas as pd
+import os
+import json
+import logging
+
 import cv2
 import tensorflow as tf
 from deepface import DeepFace
 from dataclasses import dataclass, field
 from sklearn.cluster import KMeans
 
-rgb_back_ends = ['mediapipe']
+from vutil import get_config
+
+logging.basicConfig(level=logging.INFO)
+logger=logging.getLogger()
 
 @dataclass
 class FaceData:
@@ -25,6 +33,8 @@ class FaceData:
 
     def to_dict(self, keep_face_image=False):
         """
+        ---------------------------------------------------------------------------------------------------
+
         This function converts the FaceData object to a dictionary.
 
         Parameters:
@@ -51,6 +61,8 @@ class FaceData:
 
     def set_face_from_image(self, image):
         """
+        ---------------------------------------------------------------------------------------------------
+
         Crops the image using the stored bounding box coordinates and sets the cropped image as the face.
         Also checks to ensure the bounding box does not exceed the dimensions of the image.
 
@@ -72,6 +84,8 @@ class FaceData:
 
 def deepface_dict_to_facedata(data_dict, frame_idx):
     """
+    ---------------------------------------------------------------------------------------------------
+
     Converts a dictionary with specific keys into a FaceData object.
 
     Parameters:
@@ -92,6 +106,7 @@ def deepface_dict_to_facedata(data_dict, frame_idx):
         If a required key is missing in the dictionary.
     ValueError
         If data types are not as expected.
+    ---------------------------------------------------------------------------------------------------
     """
     try:
         face = data_dict['face']
@@ -120,9 +135,38 @@ def deepface_dict_to_facedata(data_dict, frame_idx):
     except ValueError as e:
         raise ValueError(f"Value error: {e}")
 
+def get_config(filepath, json_file):
+    """
+    ------------------------------------------------------------------------------------------------------
+
+    This function reads the configuration file containing the column names for the output dataframes,
+    and returns the contents of the file as a dictionary.
+
+    Parameters:
+    ...........
+    filepath : str
+        The path to the configuration file.
+    json_file : str
+        The name of the configuration file.
+
+    Returns:
+    ...........
+    measures: A dictionary containing the names of the columns in the output dataframes.
+
+    ------------------------------------------------------------------------------------------------------
+    """
+    dir_name = os.path.dirname(filepath)
+    measure_path = os.path.abspath(os.path.join(dir_name, f"config/{json_file}"))
+
+    file = open(measure_path)
+    measures = json.load(file)
+    return measures
+
 
 def extract_face_rgb(frame, back_end_str, enforce_detection):
     """
+    ---------------------------------------------------------------------------------------------------
+
     Extracts faces from a given frame in RGB format using the DeepFace library.
 
     Parameters:
@@ -138,6 +182,7 @@ def extract_face_rgb(frame, back_end_str, enforce_detection):
     ............
     faces_detected : list
         A list of dictionaries, where each dictionary represents a detected face.
+    ---------------------------------------------------------------------------------------------------
     """
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     faces_detected = DeepFace.extract_faces(
@@ -154,6 +199,8 @@ def extract_face_rgb(frame, back_end_str, enforce_detection):
 
 def extract_face_bgr(frame, back_end_str, enforce_detection, align):
     """
+    ---------------------------------------------------------------------------------------------------
+
     Extracts faces for backends with BGR format using the DeepFace library.
 
     Parameters:
@@ -171,6 +218,8 @@ def extract_face_bgr(frame, back_end_str, enforce_detection, align):
     ............
     faces_detected : list
         A list of dictionaries, where each dictionary represents a detected face.
+    ---------------------------------------------------------------------------------------------------
+
     """
     faces_detected = DeepFace.extract_faces(
         frame,
@@ -181,12 +230,16 @@ def extract_face_bgr(frame, back_end_str, enforce_detection, align):
     return faces_detected   
 
 def extract_faces(
-    frame, frame_idx, 
+    frame, 
+    frame_idx, 
+    rgb_back_ends,
     back_end_str='mtcnn',
     align=True, 
     enforce_detection=False
 ):
     """
+    ---------------------------------------------------------------------------------------------------
+
     Extracts faces from a given frame using the specified backend and alignment settings.
 
     Parameters:
@@ -206,6 +259,8 @@ def extract_faces(
     ............
     faces_detected : list
         A list of FaceData objects representing detected faces.
+    ---------------------------------------------------------------------------------------------------
+    
     """
     if back_end_str in rgb_back_ends:
         faces_detected = extract_face_rgb(frame, back_end_str, enforce_detection)
@@ -218,6 +273,8 @@ def extract_faces(
 
 def prep_face_data_for_embed(facedata_list, frame):
     """
+    ---------------------------------------------------------------------------------------------------
+
     Ensures face data has all necessary components to embed face.
 
     Parameters:
@@ -231,6 +288,8 @@ def prep_face_data_for_embed(facedata_list, frame):
     ............
     facedata_list : list
         List of prepared FaceData objects.
+    ---------------------------------------------------------------------------------------------------
+
     """
     for face_data in facedata_list:
         if face_data.face.shape[0] == 0:
@@ -239,6 +298,8 @@ def prep_face_data_for_embed(facedata_list, frame):
 
 def embed_faces(face_data_list, model_name='Facenet'):
     """
+    ---------------------------------------------------------------------------------------------------
+
     Embeds faces from a list of FaceData objects using the specified model.
 
     Parameters:
@@ -252,6 +313,8 @@ def embed_faces(face_data_list, model_name='Facenet'):
     ............
     face_data_list : list
         List of FaceData objects with embeddings.
+    ---------------------------------------------------------------------------------------------------
+    
     """
     for face_data in face_data_list:
         deep_face_dict = DeepFace.represent(
@@ -263,8 +326,16 @@ def embed_faces(face_data_list, model_name='Facenet'):
 
     return face_data_list 
 
-def extract_embed_faces_from_frame(frame, frame_idx, detector_backend='mtcnn', model_name='Facenet'):
+def extract_embed_faces_from_frame(
+    frame,
+    frame_idx,
+    rgb_back_ends,
+    detector_backend='mtcnn',
+    model_name='Facenet'
+):
     """
+    ---------------------------------------------------------------------------------------------------
+
     Extracts and embeds faces from a given frame using the specified backend and model.
 
     Parameters:
@@ -282,37 +353,56 @@ def extract_embed_faces_from_frame(frame, frame_idx, detector_backend='mtcnn', m
     ............
     face_data_list : list
         List of FaceData objects with embeddings.
+    ---------------------------------------------------------------------------------------------------
     """
-    face_data_list = extract_faces(frame, frame_idx, back_end_str=detector_backend)
-    face_data_list = prep_face_data_for_embed(face_data_list, frame)
-    face_data_list = embed_faces(face_data_list, model_name=model_name)
+    try:
+        face_data_list = extract_faces(
+            frame,
+            frame_idx,
+            rgb_back_ends,
+            back_end_str=detector_backend
+        )
+
+        face_data_list = prep_face_data_for_embed(face_data_list, frame)
+        face_data_list = embed_faces(face_data_list, model_name=model_name)
+    except Exception as e:
+        logger.error(f"Error extracting and embedding faces: {e}, frame_idx: {frame_idx}")
+        face_data_list = [FaceData()]
     return face_data_list
 
 def load_facedata_from_video(
     video_path,
+    rgb_back_ends,
     detector_backend='mtcnn',
     model_name='Facenet', 
     n_frames=np.inf, 
     capture_n_per_sec=3
 ):
     """
+    ---------------------------------------------------------------------------------------------------
+
     Load video frames from a given video file, capturing only a specified
     number of frames per second.
 
-    Args:
+    Parameters:
+    ............
         video_path (str): Path to the video file.
         n_frames (int, optional): Maximum number of frames to capture. Defaults to np.inf.
         capture_n_per_sec (int, optional): Number of frames to capture per second. Defaults to 30.
 
     Returns:
+    ............
         tuple: A tuple containing the list of captured frames, the list of their corresponding frame indices,
                and the frames per second (fps) of the video.
+    ---------------------------------------------------------------------------------------------------
+           
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError(f"Error opening video file: {video_path}")
 
     fps = cap.get(cv2.CAP_PROP_FPS)
+    num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     n_skip = round(fps / capture_n_per_sec)
     facedata_list = []
 
@@ -328,6 +418,7 @@ def load_facedata_from_video(
             frame_facedata = extract_embed_faces_from_frame(
                 frame,
                 frame_index, 
+                rgb_back_ends,
                 detector_backend=detector_backend,
                 model_name=model_name
             )
@@ -339,11 +430,13 @@ def load_facedata_from_video(
             break
 
     cap.release()
-    return facedata_list, fps
+    return facedata_list, fps, num_frames
 
 
 def facedata_list_to_df(facedata_list):
     """
+    ---------------------------------------------------------------------------------------------------
+
     Converts a list of FaceData objects to a pandas DataFrame.
 
     Parameters:
@@ -355,6 +448,7 @@ def facedata_list_to_df(facedata_list):
     ............
     facedata_df : pandas.DataFrame
         DataFrame containing the data from the FaceData objects.
+    ---------------------------------------------------------------------------------------------------
     """
     facedata_dict_list = [facedata.to_dict() for facedata in facedata_list]
     facedata_df = pd.DataFrame(facedata_dict_list)
@@ -363,6 +457,7 @@ def facedata_list_to_df(facedata_list):
 
 def cluster_embeddings(facedata_df, confidence_threshold=0.7, n_clusters=2):
     """
+    ---------------------------------------------------------------------------------------------------
     This function clusters face embeddings based on confidence threshold and number of clusters.
 
     Parameters:
@@ -378,8 +473,10 @@ def cluster_embeddings(facedata_df, confidence_threshold=0.7, n_clusters=2):
     ............
     facedata_df : pandas.DataFrame
         DataFrame with cluster assignments for each face.
-    """
+    ---------------------------------------------------------------------------------------------------
     
+    """
+
     threshold_bools = facedata_df['confidence'] > confidence_threshold
     thresholded_facedata_df = facedata_df[threshold_bools]
     cluster_model = KMeans(n_clusters=n_clusters)
@@ -395,15 +492,21 @@ def cluster_facedata(
     n_clusters=2
 ):
     """
+    ---------------------------------------------------------------------------------------------------
+
     Clusters the face data across frames using embeddings.
 
-    Args:
+    Parameters:
+    ............
         face_data_across_frames (list): A list of face data across frames.
         threshold (float): The confidence threshold for clustering.
         n_clusters (int, optional): The number of clusters to create. Defaults to 2.
 
     Returns:
+    ............
         pandas.DataFrame: The clustered face data.
+    ---------------------------------------------------------------------------------------------------
+
     """
     facedata_df = facedata_list_to_df(
         face_data_across_frames
@@ -423,6 +526,8 @@ def get_frame_indices_below_threshold(
         frames_per_row: int
     ):
     """
+    ---------------------------------------------------------------------------------------------------
+
     Identifies the frame indices in clusters where the number of frames is below a specified minimum threshold.
 
     Parameters:
@@ -436,6 +541,7 @@ def get_frame_indices_below_threshold(
     ............
     frame_idx_not_meeting_min : list
         List of frame indices that do not meet the minimum threshold.
+    ---------------------------------------------------------------------------------------------------
     """
     frame_idx_not_meeting_min = []
     for presence_idx, presence_df in cluster_df.groupby('cluster_presences'):
@@ -451,6 +557,7 @@ def filter_cluster_segments(
     fps: int
 ):
     """
+    ---------------------------------------------------------------------------------------------------
     Filters cluster segments based on minimum frames present and displacement jumps.
 
     Parameters:
@@ -473,9 +580,8 @@ def filter_cluster_segments(
     frames_to_keep : list
         List of frame indices to keep after filtering.
 
-    TODO:
-    - Update filtering based on distance between bounding boxes (can't be too great).
-    - Add smoothing/inference based on bounding box (if it's small and discontinuous, interpolate).
+    ---------------------------------------------------------------------------------------------------
+
     """
     cluster_df['cluster_presences'] = np.cumsum(
         cluster_df.sample_time.diff() > ((frames_per_row / fps)*1.5) # 1.5 is hacky but just gives rounding room for fps and frames per row
@@ -495,11 +601,15 @@ def convert_face_df_to_bbox_list(
     face_df,
     frames_per_row, 
     max_frame_idx, 
+    num_frames_vid
 ):
     """
+    ---------------------------------------------------------------------------------------------------
+
     Prepares the face dataframe for output by interpolating missing frames and converting it to a list of dictionaries.
 
-    Args:
+    Parameters:
+    ............
         face_df (pandas.DataFrame): The input face dataframe.
         min_frame_idx (int): The minimum frame index.
         max_frame_idx (int): The maximum frame index.
@@ -507,45 +617,60 @@ def convert_face_df_to_bbox_list(
         interpolate_col (str, optional): The column name to use for interpolation. Defaults to 'frame_idx'.
 
     Returns:
+    ............
         list: A list of dictionaries representing the processed face dataframe.
-    """
-    out_data_list = [{} for _ in range(max_frame_idx)]
-    for idx,row in face_df.iterrows():
+    ---------------------------------------------------------------------------------------------------
 
+    """
+    max_frame = min(num_frames_vid, max_frame_idx)
+    out_data_list = [{} for _ in range(max_frame)]
+    for idx,row in face_df.iterrows():
+        # upsample frames
         for i in range(row.frame_idx, row.frame_idx + frames_per_row):
-            out_data_list[i] = {
-                'bb_x':row.bb_x,
-                'bb_y':row.bb_y,
-                'bb_h':row.bb_h,
-                'bb_w':row.bb_w
-            }
+
+            # only add if within max frame (i.e. video length or n_frames sampled)
+            if i < max_frame:
+                out_data_list[i] = {
+                    'bb_x':row.bb_x,
+                    'bb_y':row.bb_y,
+                    'bb_h':row.bb_h,
+                    'bb_w':row.bb_w
+                }
 
     return out_data_list
 
-def prep_face_clusters_for_output_(
+def prep_face_clusters_for_output(
     facedata_df, 
     min_frames_face_present, 
     capture_n_frames_per_second,
     fps,
+    num_frames_vid,
     n_clusters
 ):
     """
+    ---------------------------------------------------------------------------------------------------
+
     Filters and prepares face clusters for output.
 
-    Args:
+    Parameters:
+    ............
         facedata_df (pandas.DataFrame): The DataFrame containing face data.
         min_frames_face_present (int): The minimum number of frames a face must be present in a cluster.
         frames_per_row (int): The number of frames per row.
         fps (int): The frames per second of the video.
+        num_frames_vid (int): The total number of frames in the video.
         n_clusters (int): The number of clusters.
 
     Returns:
+    ............
         dict: A dictionary containing face bounding box lists for each cluster.
+    ---------------------------------------------------------------------------------------------------
+
     """
     
     facedata_df['sample_time']=facedata_df['frame_idx']/fps
     frames_per_row = round(fps/capture_n_frames_per_second)
-    max_frame_idx=facedata_df.frame_idx.max() + frames_per_row
+    max_frame_idx = facedata_df.frame_idx.max() + frames_per_row
 
     face_list_dict = {}
     for cluster_idx in range(n_clusters):
@@ -566,6 +691,7 @@ def prep_face_clusters_for_output_(
         face_bbox_list = convert_face_df_to_bbox_list(
             cluster_df,
             frames_per_row,
+            num_frames_vid,
             max_frame_idx
         )
 
@@ -584,9 +710,12 @@ def preprocess_face_video(
     n_frames=np.inf
 ):
     """
+    ---------------------------------------------------------------------------------------------------
+
     Preprocesses a face video by extracting face data, clustering the faces, and preparing the output.
 
     Parameters:
+    ............
     - video_path (str): Path to the input video file.
     - capture_n_frames_per_second (int): Number of frames to capture per second, default 2 assumes videos are relatively slow smoothing - increasing this parameter should increase quality of clustering but will cause the function to run for longer.
     - model_name (str): Name of the face recognition model to use Deepface library, default 'mtcnn'.
@@ -597,124 +726,42 @@ def preprocess_face_video(
     - n_frames (int): Maximum number of frames to process, default np.inf (i.e. process all frames).
 
     Returns:
+    ............
     - out_dict (dict): Dictionary containing the preprocessed face data.
+    - facedata_df (pandas.DataFrame): DataFrame containing the face data and cluster info.
+    ---------------------------------------------------------------------------------------------------
 
     """
-    
-    face_data_across_frames, fps = load_facedata_from_video(
-        video_path,
-        n_frames=n_frames,
-        capture_n_per_sec=capture_n_frames_per_second,
-        detector_backend=detector_backend,
-        model_name=model_name
-    )
+    config = get_config(os.path.abspath(__file__), 'preprocess.json')
 
-    facedata_df = cluster_facedata(
-        face_data_across_frames,
-        threshold,
-        n_clusters=n_clusters
-    )
+    try:
 
-    min_frames_face_present = fps * min_sec_face_present
-    out_dict = prep_face_clusters_for_output_(
-        facedata_df, 
-        min_frames_face_present, 
-        capture_n_frames_per_second,
-        fps,
-        n_clusters
-    )
+        face_data_across_frames, fps, num_frames_vid = load_facedata_from_video(
+            video_path,
+            config['rgb_back_ends'],
+            n_frames=n_frames,
+            capture_n_per_sec=capture_n_frames_per_second,
+            detector_backend=detector_backend,
+            model_name=model_name
+        )
 
+        facedata_df = cluster_facedata(
+            face_data_across_frames,
+            threshold,
+            n_clusters=n_clusters
+        )
+
+        min_frames_face_present = fps * min_sec_face_present
+        out_dict = prep_face_clusters_for_output(
+            facedata_df, 
+            min_frames_face_present, 
+            capture_n_frames_per_second,
+            fps,
+            num_frames_vid,
+            n_clusters
+        )
+    except Exception as e:
+        logger.error(f"Error preprocessing video: file: {video_path} & Error: {e}'")
+        
     return out_dict,facedata_df
 
-def draw_bounding_boxes_sf(frame, bb_dict):
-    # TODO need to updated
-    x = bb_dict['bb_x']
-    y = bb_dict['bb_y']
-    w = bb_dict['bb_w']
-    h = bb_dict['bb_h']
-    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-    return frame
-
-def blacken_outside_bounding_box(frame, bb_dict):
-    """
-    Blackens the area outside a specified bounding box in the given frame.
-
-    Parameters
-    ----------
-    frame : numpy.ndarray
-        The input image frame in which the area outside the bounding box will be blackened.
-    bb_dict : dict
-        Dictionary containing bounding box coordinates and dimensions with keys:
-        'bb_x' (int): The x-coordinate of the top-left corner of the bounding box.
-        'bb_y' (int): The y-coordinate of the top-left corner of the bounding box.
-        'bb_w' (int): The width of the bounding box.
-        'bb_h' (int): The height of the bounding box.
-
-    Returns
-    -------
-    numpy.ndarray
-        The resulting image frame with the area outside the bounding box blackened.
-    """
-    x = bb_dict['bb_x']
-    y = bb_dict['bb_y']
-    w = bb_dict['bb_w']
-    h = bb_dict['bb_h']
-
-    # Create a black image of the same size as the frame
-    mask = np.zeros_like(frame)
-
-    # Copy the bounding box area from the original frame to the mask
-    mask[y:y+h, x:x+w] = frame[y:y+h, x:x+w]
-
-    return mask
-
-
-def process_video_single_face(
-    video_path,
-    output_path,
-    detections
-):
-    """
-    Process the video by drawing bounding boxes based on the provided detections
-    and save the processed video.
-
-    Args:
-        video_path (str): Path to the video file.
-        detections (list): List of dictionaries containing bounding box and frame index information.
-        output_path (str): Path to save the processed video.
-        capture_n_per_sec (int, optional): Number of frames to capture per second. Defaults to 30.
-    """
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise ValueError(f"Error opening video file: {video_path}")
-
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    # Set up the video writer to save the output video
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-
-    frame_index = 0
-    
-    max_frame_index = len(detections)
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        if frame_index >= max_frame_index:
-            break
-            
-        frame_dict = detections[frame_index]
-        if len(frame_dict.keys()) != 0:
-            #draw_bounding_boxes_sf(frame,frame_dict)
-            face_frame = blacken_outside_bounding_box(frame,frame_dict)
-            out.write(face_frame)
-        else:
-            out.write(frame)
-        frame_index += 1
-
-    cap.release()
-    out.release()

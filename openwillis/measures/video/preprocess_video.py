@@ -679,7 +679,6 @@ def prep_face_clusters_for_output(
             fps,
             bbox_cols,
             interpolate=interpolate
-            #add interpolate parameter 
         )
         out_df = out_df.merge(
             face_bbox_df,

@@ -7,15 +7,12 @@ import numpy as np
 import pandas as pd
 import feat 
 
-#from .util import create_cropped_frame, calculate_padding
-
-import mediapipe as mp
-from protobuf_to_dict import protobuf_to_dict
-
-
+from .util import create_cropped_frame, calculate_padding
+from .face_landmark import get_landmarks
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
+
 ##################################################
 # Head movement extraction using py-feat
 ##################################################
@@ -215,389 +212,105 @@ def compute_face_centers(df):
 
     return df
 
-####################################################
-# Mediapipe head movement extraction
-####################################################
+def compute_face_centers_mp(
+    landmarks_df: pd.DataFrame,
+    video_path: str,
+    bbox_list: list,
+    center_face_ref_id: int,
+) -> pd.DataFrame:
+    """Add face-center coordinates for mediapipe landmarks in full-frame space."""
+    landmark_prefix = f"lmk{int(center_face_ref_id):03d}"
+    x_col = f"{landmark_prefix}_x"
+    y_col = f"{landmark_prefix}_y"
+    z_col = f"{landmark_prefix}_z"
 
-def init_facemesh():
-    """
-    ---------------------------------------------------------------------------------------------------
+    missing_cols = [col for col in (x_col, y_col) if col not in landmarks_df.columns]
+    if missing_cols:
+        raise KeyError(
+            f"Landmark columns missing from dataframe: {', '.join(missing_cols)}"
+        )
 
-    This function initializes a Facemesh object from the Mediapipe library, with a minimum detection
-    confidence of 0.5. It returns the Facemesh object.
+    if not bbox_list:
+        landmarks_df["face_center_x"] = landmarks_df[x_col]
+        landmarks_df["face_center_y"] = landmarks_df[y_col]
+        landmarks_df["face_center_z"] = (
+            landmarks_df[z_col] if z_col in landmarks_df.columns else np.nan
+        )
+        return landmarks_df
 
-    Parameters:
-    ............
-    None
+    cap = cv2.VideoCapture(video_path)
+    try:
+        frame_width = float(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = float(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    finally:
+        cap.release()
 
-    Returns:
-    ............
-    face_mesh : Mediapipe object
-        Facemesh object with minimum detection confidence of 0.5
+    if frame_width <= 0 or frame_height <= 0:
+        logger.warning(
+            "Unable to resolve frame dimensions for %s; face centers will be NaN",
+            video_path,
+        )
+        landmarks_df["face_center_x"] = np.nan
+        landmarks_df["face_center_y"] = np.nan
+        landmarks_df["face_center_z"] = (
+            landmarks_df[z_col] if z_col in landmarks_df.columns else np.nan
+        )
+        return landmarks_df
 
-    ---------------------------------------------------------------------------------------------------
-    """
+    def _coerce_bbox_value(bbox: dict, keys: tuple[str, ...]) -> float:
+        for key in keys:
+            if key in bbox and bbox[key] is not None:
+                try:
+                    return float(bbox[key])
+                except (TypeError, ValueError):
+                    continue
+        return np.nan
 
-    mp_face_mesh = mp.solutions.face_mesh
-    face_mesh = mp_face_mesh.FaceMesh(min_detection_confidence=0.5, max_num_faces=2)
-    return face_mesh
+    full_x = np.full(len(landmarks_df), np.nan, dtype=float)
+    full_y = np.full(len(landmarks_df), np.nan, dtype=float)
 
-def filter_landmarks(col_name, keypoints):
-    """
-    ---------------------------------------------------------------------------------------------------
-
-    This function takes the column name and landmark keypoints detected by Facemesh as inputs, and
-    returns a Pandas dataframe with the filtered landmarks in the specified column.
-
-    Parameters:
-    ............
-    col_name : str
-        Column name to filter landmarks into
-    keypoints : dict
-        Landmark keypoints detected by Facemesh
-
-    Returns:
-    ............
-    df : pandas.DataFrame
-        Dataframe with the filtered landmarks in the specified column
-
-    ---------------------------------------------------------------------------------------------------
-    """
-
-    col_list = list(range(0, 468))
-    cols = ['lmk' + str(s+1).zfill(3) + '_' + col_name for s in col_list]
-
-    item = list(map(lambda d: d[col_name], keypoints['landmark']))
-    df = pd.DataFrame([item], columns=cols)
-
-    return df
-
-def get_column():
-    """
-    ---------------------------------------------------------------------------------------------------
-
-    This function returns an empty Pandas dataframe with columns corresponding to the 468 facial landmark
-    coordinates, labeled with the landmark number and x/y/z coordinate.
-
-    Parameters:
-    ............
-    None
-
-    Returns:
-    ............
-    df : pandas.DataFrame
-        Empty dataframe with columns for each facial landmark coordinate
-
-    ---------------------------------------------------------------------------------------------------
-    """
-
-    col_list = list(range(0, 468))
-    col_name = []
-
-    value = [np.nan] * 468 * 3
-    lmk_cord = ['x', 'y', 'z']
-
-    for coord in lmk_cord:
-        cols = ['lmk' + str(s + 1).zfill(3) + '_' + coord for s in col_list]
-        col_name.extend(cols)
-
-    df = pd.DataFrame([value], columns = col_name)
-    return df
-
-def create_keypoints_df(face_landmarks):
-    '''
-    Create a dictionary of keypoints from the landmarks.'''
-
-    
-    keypoints = protobuf_to_dict(face_landmarks)
-
-    if len(keypoints)>0:
-        df_x = filter_landmarks('x', keypoints)
-        df_y = filter_landmarks('y', keypoints)
-        df_z = filter_landmarks('z', keypoints)
-        df_coord = pd.concat([df_x, df_y, df_z], axis=1)
-    return df_coord
-
-def _get_landmark_dataframes(result):
-    """Return a list of per-face landmark dataframes from a FaceMesh result."""
-
-    if result is None:
-        return []
-
-    landmarks = getattr(result, 'multi_face_landmarks', None)
-    if not landmarks:
-        return []
-
-    return [create_keypoints_df(face_landmarks) for face_landmarks in landmarks]
-
-
-def _select_face_by_bbox(df_list, bbox):
-    """Pick the landmark dataframe whose face center is closest to the bbox center."""
-
-    if not df_list or bbox is None:
-        return None
-
-    bbox_center_x = (bbox['bb_x'] + bbox['bb_x'] + bbox['bb_w']) / 2
-    bbox_center_y = (bbox['bb_y'] + bbox['bb_y'] + bbox['bb_h']) / 2
-
-    min_distance = float('inf')
-    selected_df = None
-
-    for df in df_list:
-        if 'lmk001_x' not in df.columns or 'lmk001_y' not in df.columns:
+    limit = min(len(bbox_list), len(landmarks_df))
+    for idx in range(limit):
+        bbox = bbox_list[idx] or {}
+        if not isinstance(bbox, dict):
             continue
 
-        face_center_x = df['lmk001_x'].values[0]
-        face_center_y = df['lmk001_y'].values[0]
+        bb_x = _coerce_bbox_value(bbox, ("bb_x1", "bb_x", "x"))
+        bb_y = _coerce_bbox_value(bbox, ("bb_y1", "bb_y", "y"))
+        bb_w = _coerce_bbox_value(bbox, ("bb_w", "w", "width"))
+        bb_h = _coerce_bbox_value(bbox, ("bb_h", "h", "height"))
 
-        distance = ((face_center_x - bbox_center_x) ** 2 + (face_center_y - bbox_center_y) ** 2) ** 0.5
+        if np.isnan(bb_x) or np.isnan(bb_y) or np.isnan(bb_w) or np.isnan(bb_h):
+            continue
 
-        if distance < min_distance:
-            min_distance = distance
-            selected_df = df
+        x_norm = landmarks_df.at[idx, x_col]
+        y_norm = landmarks_df.at[idx, y_col]
 
-    return selected_df
+        if pd.isna(x_norm) or pd.isna(y_norm):
+            continue
 
+        x_abs = bb_x + float(x_norm) * bb_w
+        y_abs = bb_y + float(y_norm) * bb_h
 
-def filter_coord(result, bbox=None):
-    """
-    ---------------------------------------------------------------------------------------------------
+        full_x[idx] = x_abs / frame_width
+        full_y[idx] = y_abs / frame_height
 
-    This function takes the output from a Facemesh object and returns a Pandas dataframe with the filtered
-    3D coordinates of each facial landmark detected.
+    if np.isfinite(frame_width):
+        valid_x = ~np.isnan(full_x)
+        if valid_x.any():
+            full_x[valid_x] = np.clip(full_x[valid_x], 0.0, 1.0)
+    if np.isfinite(frame_height):
+        valid_y = ~np.isnan(full_y)
+        if valid_y.any():
+            full_y[valid_y] = np.clip(full_y[valid_y], 0.0, 1.0)
 
-    Parameters:
-    ............
-    result : Mediapipe object
-        Output from a Facemesh object
-    bbox : dict, optional
-        Bounding box used to disambiguate between multiple detected faces.
-
-    Returns:
-    ............
-    df_coord : pandas.DataFrame
-        Dataframe with the filtered 3D coordinates of each facial landmark detected
-
-    ---------------------------------------------------------------------------------------------------
-    """
-    df_coord = get_column()
-    df_coord_list = _get_landmark_dataframes(result)
-
-    if not df_coord_list:
-        return df_coord
-
-    if bbox is None:
-        return df_coord_list[0]
-
-    selected_df = _select_face_by_bbox(df_coord_list, bbox)
-    return selected_df if selected_df is not None else df_coord
-
-def process_and_format_face_mesh(img, face_mesh, df_common, bbox=None):
-    """
-    Process the given image using the face_mesh model and format the resulting face landmarks.
-
-    Args:
-        img (numpy.ndarray): The input image.
-        face_mesh: The face_mesh model.
-        df_common (pandas.DataFrame): The common dataframe.
-
-    Returns:
-        pandas.DataFrame: The formatted dataframe containing the face landmarks.
-    """
-    result = face_mesh.process(img)
-    df_coord = filter_coord(result, bbox=bbox)
-    df_landmark = pd.concat([df_common, df_coord], axis=1)
-    return df_landmark
-
-
-
-
-def run_facemesh(path, frames_per_second=3, bbox_list=[]):
-    """
-    ---------------------------------------------------------------------------------------------------
-
-    This function takes a path to an image file as input, runs Facemesh on the image, and returns a list
-    of dataframes containing the landmark coordinates for each frame of the video.
-
-    Parameters:
-    ............
-    path : str
-        Path to image file
-    frames_per_second : float, optional
-        The number of frames to sample per second of video. Default is 3.
-        This determines the temporal resolution of the analysis.
-    bbox_list : list, optional
-        List of bounding boxes for each frame in the video
-
-    Returns:
-    ............
-    df_list : list
-        List of dataframes containing landmark coordinates for each frame of the video
-
-    ---------------------------------------------------------------------------------------------------
-    """
-
-    df_list = []
-    frame = 0
-
-    try:
-        cap = cv2.VideoCapture(path)
-        num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        video_fps = cap.get(cv2.CAP_PROP_FPS)
-        len_bbox_list = len(bbox_list)
-        
-        # Calculate skip interval to get desired frames per second
-        if frames_per_second >= video_fps:
-            skip_interval = 0
-        else:
-            skip_interval = max(0, int(video_fps / frames_per_second))
-        
-        face_mesh = init_facemesh()
-        bbox_list_passed = len_bbox_list > 0
-
-        if bbox_list_passed & (num_frames != len_bbox_list):
-            raise ValueError('Number of frames in video and number of bounding boxes do not match')
-
-        n_frames_skipped = skip_interval
-
-        while True:
-            try:
-                ret_type, img = cap.read()
-                
-                if ret_type is not True:
-                    break
-
-                if n_frames_skipped < skip_interval:
-                    n_frames_skipped += 1
-                    df_landmark = get_undected_markers(frame, video_fps)
-
-                elif n_frames_skipped == skip_interval:
-                    n_frames_skipped = 0
-                    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    df_common = pd.DataFrame([[frame, frame/video_fps]], columns=['frame', 'time'])
-                    
-                    # one liner for bbox list
-                    bbox = bbox_list[frame] if bbox_list_passed else None
-                    df_landmark = process_and_format_face_mesh(
-                        img_rgb,
-                        face_mesh,
-                        df_common,
-                        bbox=bbox
-                    )
-
-            except Exception as e:
-                logger.info(f'error processing frame: {frame} in file: {path} & Error: {e}')
-                df_landmark = get_undected_markers(frame, video_fps)
-
-            df_list.append(df_landmark)
-            frame += 1
-
-    except Exception as e:
-        logger.info(f'Face error process file in facemesh for file:{path} & Error: {e}')
-
-    finally:
-        # Empty dataframe in case of insufficient datapoints
-        if len(df_list) == 0:
-            df_landmark = get_empty_dataframe()
-            df_list.append(df_landmark)
-            logger.info(f'Face not detected by facemesh in: {path}')
-
-    return df_list, skip_interval
-
-def get_undected_markers(frame,fps):
-    """
-    ---------------------------------------------------------------------------------------------------
-
-    This function creates a dataframe with NaN values representing facial landmarks that were not detected
-    in a frame of the video.
-
-    Parameters:
-    ............
-    frame : int
-        Frame number
-    fps : int
-        Frames per second of the video
-
-    Returns:
-    ............
-    df_landmark : pandas.DataFrame
-        Dataframe with NaN values for undetected facial landmarks in a frame of the video
-
-    ---------------------------------------------------------------------------------------------------
-    """
-    df_common = pd.DataFrame([[frame, frame/fps]], columns=['frame','time'])
-    df_coord = get_column()
-
-    col_list = list(range(0, 468))
-    cols_x = ['lmk' + str(s+1).zfill(3) + '_x' for s in col_list]
-    cols_y = ['lmk' + str(s+1).zfill(3) + '_y' for s in col_list]
-    cols_z = ['lmk' + str(s+1).zfill(3) + '_z' for s in col_list]
-
-    cols = cols_x + cols_y + cols_z
-    df_coord.columns = cols
-
-    df_landmark = pd.concat([df_common, df_coord], axis=1)
-    return df_landmark
-
-def get_empty_dataframe():
-    """
-    ---------------------------------------------------------------------------------------------------
-
-    This function creates an empty dataframe containing columns for frame number, landmark position
-    variables, and overall displacement measurement.
-
-    Parameters:
-    ............
-    None
-
-    Returns:
-    ............
-    empty_df : pandas.DataFrame
-        Empty displacement dataframe
-
-    ---------------------------------------------------------------------------------------------------
-    """
-    columns = ['frame','time'] + ['lmk' + str(col+1).zfill(3) for col in range(0, 468)] + ['overall']
-    empty_df = pd.DataFrame(columns=columns)
-    return empty_df
-
-def get_landmarks(path, frames_per_second=3, bbox_list=[]):
-    """
-    ---------------------------------------------------------------------------------------------------
-
-    This function takes a path to an image file as input, runs Facemesh on the image, and returns a
-    dataframe containing the landmark coordinates for each frame of the video.
-
-    Parameters:
-    ............
-    path : str
-        Path to image file
-    frames_per_second : float, optional
-        The number of frames to sample per second of video. Default is 3.
-        This determines the temporal resolution of the analysis.
-    bbox_list : list, optional
-        List of bounding boxes for each frame in the video
-
-    Returns:
-    ............
-    df_landmark : pandas.DataFrame
-        Dataframe containing landmark coordinates for each frame of the video
-
-    ---------------------------------------------------------------------------------------------------
-    """
-
-    landmark_list, skip_interval = run_facemesh(
-        path,
-        bbox_list=bbox_list,
-        frames_per_second=frames_per_second
+    landmarks_df["face_center_x"] = pd.Series(full_x, index=landmarks_df.index)
+    landmarks_df["face_center_y"] = pd.Series(full_y, index=landmarks_df.index)
+    landmarks_df["face_center_z"] = (
+        landmarks_df[z_col] if z_col in landmarks_df.columns else np.nan
     )
 
-    if len(landmark_list) > 0:
-        df_landmark = pd.concat(landmark_list).reset_index(drop=True)
-    else:
-        df_landmark = get_empty_dataframe()
-
-    return df_landmark, skip_interval
+    return landmarks_df
 
 
 # -----------------------------------------------------------------------------
@@ -621,8 +334,9 @@ except ModuleNotFoundError:  # pragma: no cover
 # Landmark subsets
 # -----------------------------------------------------------------------------
 _DEFAULT_IDS: Tuple[int, ...] = (2, 34, 264, 169, 61,  341, 112, 10)
-_DEFAULT_CANONICAL_FACEMESH = 'resources/mediapipe_default_from_aflw_landmarks.csv'
-print(os.path.abspath(__file__))
+
+_DEFAULT_CANONICAL_FACEMESH = os.path.dirname(os.path.abspath(__file__))+'/resources/mediapipe_default_from_aflw_landmarks.csv'
+
 RefStrategy = Literal["first", "auto", "canonical"]
 def _euler_xyz(Rmat: np.ndarray, *, degrees: bool = True) -> Tuple[float, float, float]:
     """Convert 3×3 *Rmat* to xyz Tait‑Bryan angles (rx, ry, rz)."""
@@ -636,7 +350,6 @@ def _build_reference(
     ids: Sequence[int],
     strategy: RefStrategy,
     n_ref: int = 5,
-    n_auto: int = 300,
     canonical_path: Path | None = None,
 ) -> np.ndarray:
     """Return reference landmarks array (len(ids)×3)."""
@@ -651,8 +364,7 @@ def _build_reference(
     if strategy == "canonical":
         if canonical_path is None:
             logger.info('no canonical face mesh coordinates passed using default canonical face mesh')
-            pd.read_csv(_DEFAULT_CANONICAL_FACEMESH)
-        can_df = pd.read_csv(canonical_path)
+            can_df = pd.read_csv(_DEFAULT_CANONICAL_FACEMESH)
         if can_df.empty:
             raise ValueError("Canonical reference file has no rows")
 
@@ -757,14 +469,17 @@ def estimate_pose(
     *,
     ref_strategy: RefStrategy = "first",
     n_reference_frames: int = 5,
-    n_auto: int = 300,
     canonical_mesh: Path | None = None,
     use_procrustes_scale: bool = False,
 ) -> pd.DataFrame:
     """Return pitch, yaw, roll per frame (optionally using full Procrustes)."""
     ids = tuple(landmark_ids) if landmark_ids is not None else _DEFAULT_IDS
     ref_pts = _build_reference(
-        landmarks_df, ids, ref_strategy, n_reference_frames, n_auto, canonical_mesh
+        landmarks_df, 
+        ids, 
+        ref_strategy,
+        n_reference_frames, 
+        canonical_mesh
     )
     req_cols = [f"lmk{idx:03d}_{ax}" for idx in ids for ax in ("x", "y", "z")]
     pose_rows = []
@@ -940,7 +655,19 @@ def compute_summary_stats(df):
 #################################################
 # Main function to extract head movement
 #################################################
-def head_movement(video_path, method = 'mediapipe', frames_per_second=3, normalize_by_bb_size=False, bbox_list=[], padding_percent=0.1, reference_ids = None, mp_landmark_ids = None,  ref_strategy='canonical', n_reference_frames=5, canonical_mesh=None):
+def head_movement(
+    video_path, 
+    method = 'mediapipe',
+    frames_per_second=3,
+    normalize_by_bb_size=False,
+    bbox_list=[],
+    center_face_ref_id=1,
+    padding_percent=0.1,
+    mp_landmark_ids = None, 
+    ref_strategy='canonical',
+    n_reference_frames=5,
+    canonical_mesh=None
+):
     """
     Extract bounding boxes and facial landmark coordinates from a video using py-feat's Detector,
     sampling at a specified number of frames per second, and compute various head movement metrics.
@@ -999,17 +726,19 @@ def head_movement(video_path, method = 'mediapipe', frames_per_second=3, normali
             frames_per_second=frames_per_second,
             bbox_list=bbox_list
         )
-
-        ref_pts = _build_reference(
+        # if bbox passed need to convert face centers
+        landmarks_df = compute_face_centers_mp(landmarks_df, video_path, bbox_list, center_face_ref_id)
+        pose_df = estimate_pose(
             landmarks_df,
-            ref_ids,
-            ref_strategy,
-            n_reference_frames,
-            canonical_mesh
+            landmark_ids=ref_ids,
+            ref_strategy=ref_strategy,
+            n_reference_frames=n_reference_frames,
+            canonical_mesh=canonical_mesh,
+            use_procrustes_scale=False
         )
 
 
-        return landmarks_df
+        return pose_df
     
     #  out_df = pd.DataFrame(
     #     out_array,
@@ -1043,7 +772,6 @@ def head_movement(video_path, method = 'mediapipe', frames_per_second=3, normali
     
     out_df['euclidean_angle_disp'] = sampled_angles.diff().abs()
 
-    
 
     summary_df = compute_summary_stats(out_df)
 

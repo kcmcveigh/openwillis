@@ -14,7 +14,7 @@ from .preprocess_video import (
 )
 
 from .head_movement import (
-    head_movement
+    head_movement,
 )
 
 from .util import (

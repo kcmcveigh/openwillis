@@ -1,0 +1,5 @@
+openwillis-face/src/openwillis/face/__pycache__/head_movement.cpython-310.pyc
+openwillis-face/src/openwillis/face/test_headmovement.py
+openwillis-face/src/openwillis/face/__pycache__/face_landmark.cpython-310.pyc
+openwillis-face/src/openwillis/face/__pycache__/head_movement.cpython-310.pyc
+*.pyc

@@ -218,6 +218,7 @@ def compute_face_centers(df):
 ####################################################
 # Mediapipe head movement extraction
 ####################################################
+
 def init_facemesh():
     """
     ---------------------------------------------------------------------------------------------------
@@ -615,28 +616,17 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     _HAS_SCIPY = False
 
-# Optional, only if canonical .obj loading requested
-try:
-    import trimesh  # type: ignore
-    _HAS_TRIMESH = True
-except ModuleNotFoundError:  # pragma: no cover
-    _HAS_TRIMESH = False
 
 # -----------------------------------------------------------------------------
 # Landmark subsets
 # -----------------------------------------------------------------------------
 _DEFAULT_IDS: Tuple[int, ...] = (2, 34, 264, 169, 61,  341, 112, 10)
-
+_DEFAULT_CANONICAL_FACEMESH = 'resources/mediapipe_default_from_aflw_landmarks.csv'
+print(os.path.abspath(__file__))
 RefStrategy = Literal["first", "auto", "canonical"]
 def _euler_xyz(Rmat: np.ndarray, *, degrees: bool = True) -> Tuple[float, float, float]:
     """Convert 3×3 *Rmat* to xyz Tait‑Bryan angles (rx, ry, rz)."""
     return tuple(_SciPyRot.from_matrix(Rmat).as_euler("xyz", degrees=degrees))
-
-
-
-# -----------------------------------------------------------------------------
-# I/O helpers
-# -----------------------------------------------------------------------------
 
 def _row_to_pts(row: pd.Series, ids: Sequence[int]) -> np.ndarray:
     return np.asarray([[row[f"lmk{idx:03d}_x"], -row[f"lmk{idx:03d}_y"], row[f"lmk{idx:03d}_z"]] for idx in ids])
@@ -660,7 +650,8 @@ def _build_reference(
 
     if strategy == "canonical":
         if canonical_path is None:
-            raise ValueError("canonical reference requires --canonical_csv/obj")
+            logger.info('no canonical face mesh coordinates passed using default canonical face mesh')
+            pd.read_csv(_DEFAULT_CANONICAL_FACEMESH)
         can_df = pd.read_csv(canonical_path)
         if can_df.empty:
             raise ValueError("Canonical reference file has no rows")
@@ -949,7 +940,7 @@ def compute_summary_stats(df):
 #################################################
 # Main function to extract head movement
 #################################################
-def head_movement(video_path, method = 'mediapipe', frames_per_second=3, normalize_by_bb_size=False, bbox_list=[], padding_percent=0.1):
+def head_movement(video_path, method = 'mediapipe', frames_per_second=3, normalize_by_bb_size=False, bbox_list=[], padding_percent=0.1, reference_ids = None, mp_landmark_ids = None,  ref_strategy='canonical', n_reference_frames=5, canonical_mesh=None):
     """
     Extract bounding boxes and facial landmark coordinates from a video using py-feat's Detector,
     sampling at a specified number of frames per second, and compute various head movement metrics.
@@ -991,13 +982,35 @@ def head_movement(video_path, method = 'mediapipe', frames_per_second=3, normali
             padding_percent=padding_percent
         )
         out_df = compute_face_centers(out_df)
+
+        sampled_frames = out_df.copy()
+
+        sampled_frames = compute_fw_disp(
+            sampled_frames, 
+            normalize_by_bb_size=normalize_by_bb_size
+        )
+
+        out_df['xy_disp'] = sampled_frames['xy_disp']
     elif method == 'mediapipe':
-        out_df, skip_interval = get_landmarks(
+
+        ref_ids = tuple(mp_landmark_ids) if mp_landmark_ids is not None else _DEFAULT_IDS
+        landmarks_df, skip_interval = get_landmarks(
             video_path,
             frames_per_second=frames_per_second,
             bbox_list=bbox_list
         )
-        return out_df
+
+        ref_pts = _build_reference(
+            landmarks_df,
+            ref_ids,
+            ref_strategy,
+            n_reference_frames,
+            canonical_mesh
+        )
+
+
+        return landmarks_df
+    
     #  out_df = pd.DataFrame(
     #     out_array,
     #     columns=[
@@ -1017,13 +1030,7 @@ def head_movement(video_path, method = 'mediapipe', frames_per_second=3, normali
     
 
 # df should have face center x and y, (sometimes z if mediapipe)
-    sampled_frames = out_df.copy()
-    #### compute displacement
-    sampled_frames = compute_fw_disp(
-        sampled_frames, 
-        normalize_by_bb_size=normalize_by_bb_size
-    )
-    out_df['xy_disp'] = sampled_frames['xy_disp']
+    
 
     ### compute angle displacement
     out_df['euclidean_angle'] = compute_rotation_angles_vectorized(
